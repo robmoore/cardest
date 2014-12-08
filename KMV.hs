@@ -1,3 +1,7 @@
+-- Based on approach outlined in "On Synopses for Distinct-Value Estimation Under Multiset Operations"
+-- (http://www.almaden.ibm.com/cs/people/peterh/cacm.pdf) and with directon from the post
+-- Sketch of the Day: K-Minimum Values (http://research.neustar.biz/2012/07/09/sketch-of-the-day-k-minimum-values)
+
 module KMV where
 
 import           Control.Applicative
@@ -9,7 +13,6 @@ import qualified Data.PQueue.Max            as DPM (MaxQueue, deleteMax, empty,
                                                     findMax, insert, null,
                                                     singleton, size, take)
 import           Data.Word                  (Word32)
-import qualified Math.Statistics            as MS (mean)
 
 mkHash :: Fractional a => String -> a
 mkHash s = fromIntegral h / fromIntegral (maxBound :: Word32)
@@ -22,9 +25,10 @@ condInsert x k mq
    | x < DPM.findMax mq = DPM.deleteMax $ DPM.insert x mq
    | otherwise = mq -- value isn't larger than max so no-op
 
-estDistinctCount k mq = if sz < k then sz else round d
+estCount :: RealFrac a => Int -> DPM.MaxQueue a -> Int
+estCount k mq = if sz < k then sz else round $ d k mq
     where sz = DPM.size mq
-          d = fromIntegral (k - 1) / DPM.findMax mq
+          d n pq= fromIntegral (n - 1) / DPM.findMax pq
 
 main :: IO ()
 main = do
@@ -33,12 +37,12 @@ main = do
 
     text <- filter (notElem '.') <$> concatMap words <$> lines <$> readFile filename
     let hashed = map mkHash text
-    let dHashed = DL.nub hashed
     putStr "Total number of words: "
     print $ length hashed
+    let dHashed = DL.nub hashed
     putStr "Distinct number of words: "
     print $ length dHashed
 
     let pq = foldr (`condInsert` k) DPM.empty hashed
-    putStr "Estimated number of words: "
-    print $ estDistinctCount k pq
+    putStr "Estimated number of disinct words: "
+    print $ estCount k pq
