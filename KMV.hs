@@ -8,14 +8,14 @@ import           Control.Applicative
 
 import qualified Data.ByteString.Lazy.Char8 as BC (pack)
 import qualified Data.Digest.XXHash         as XXH (xxHash)
-import qualified Data.List                  as DL (nub, sort)
+import qualified Data.List                  as DL (nub)
 import qualified Data.PQueue.Max            as DPM (MaxQueue, deleteMax, empty,
                                                     findMax, insert, null,
-                                                    singleton, size, take)
+                                                    singleton, size)
 import           Data.Word                  (Word32)
 
 mkHash :: Fractional a => String -> a
-mkHash s = fromIntegral h / fromIntegral (maxBound :: Word32)
+mkHash s = fromIntegral h / fromIntegral (maxBound :: Word32) -- resize to {0,1}
    where h = XXH.xxHash $ BC.pack s
 
 condInsert :: Ord a => a -> Int -> DPM.MaxQueue a -> DPM.MaxQueue a
