@@ -11,55 +11,85 @@
 module HLL where
 
 import           Control.Applicative
+import qualified Control.Monad               as CM (forM_)
+import qualified Control.Monad.Primitive     as CMP (PrimMonad)
+import qualified Control.Monad.ST            as CMS (ST, runST)
+import           Data.Bits                   as DB
+import qualified Data.Bits.Extras            as BE (nlz, w16)
+import qualified Data.ByteString.Lazy.Char8  as BC (pack)
+import qualified Data.Digest.XXHash          as XXH (xxHash)
+import qualified Data.Vector.Unboxed         as DVU (Vector, filter, freeze,
+                                                     length, map, sum)
+import qualified Data.Vector.Unboxed.Mutable as DVUM (read, replicate, write)
+import           Data.Word                   (Word16, Word32)
 
-import           Data.Bits                  as DB
-import qualified Data.Bits.Extras           as BE (nlz)
-import qualified Data.ByteString.Lazy.Char8 as BC (pack)
-import qualified Data.Digest.XXHash         as XXH (xxHash)
-import qualified Data.List                  as DL (nub)
-import           Data.Word                  (Word32)
-
--- Splits Word32 to two Word16s
-split ss x = (fromIntegral (shiftR ix ss .&. mask), fromIntegral (ix .&. mask))
-  where ix = toInteger x
-        mask = 2 ^ ss - 1
+-- Splits Word32 into two Word16s
+split :: Int -> Word32 -> (Word16, Word16)
+split ss x = (fromIntegral (shiftR x ss .&. mask), fromIntegral (x .&. mask))
+  where mask = 2 ^ ss - 1 -- Note: Should hard code these values if you aren't going to support variable return types
 
 -- hash value in {0, 1} (32-bits)
-mkHash :: Fractional a => String -> a
-mkHash s = fromIntegral h / fromIntegral (maxBound :: Word32)
-   where h = XXH.xxHash $ BC.pack s
+mkHash :: String -> Word32
+mkHash s = XXH.xxHash $ BC.pack s
 
--- Initialize M. Needs to be an array as aggregate modifies random values in the list
-initM m = replicate 0
+calcP :: String -> Int -> (Word16, Word16)
+calcP x m = (j, p)
+    where h = div (mkHash x) (fromIntegral m)
+          hs = split 16 h -- 16 should probably be p value. that is, configurable
+          -- Flajolet = "1 +", Google = no "1 +"
+          j = BE.w16 $ succ $ fst hs -- {the binary address determined by the first b/p bits of x}. idx in Google paper.
+          w = snd hs -- second bits of h
+          p = BE.w16 $ succ $ BE.nlz w -- the position of the leftmost 1-bit
 
 -- Phase 1: Aggregation
 -- map to individual M values
 -- return 0 if more than p(s)
-aggregate v M = max (M !! j) p
-  where x = mkHash v
-        xp = split 16 x -- 16 should probably be p value. that is, configurable
-        -- Flajolet = "1 +", Google = no "1 +"
-        j = 1 + fst xp -- {the binary address determined by the first b/p bits of x}. idx in Google paper.
-        w = snd xp -- second bits of h
-        p = BE.nlz w + 1 -- the position of the leftmost 1-bit
+-- Note: Side effects!
+aggregate :: CMP.PrimMonad m => [String] -> Int -> m (DVU.Vector Word16)
+aggregate vs n = do
+  mv <- DVUM.replicate n 0 -- $ BE.w16 0
+  CM.forM_ vs $ \v -> do
+     let (j, p) = calcP v n
+     let ji = fromIntegral j
+     jv <- DVUM.read mv ji
+     DVUM.write mv ji $ max jv p
+  DVU.freeze mv
+
+calcAlpha :: Int -> Float
+calcAlpha x
+ | x == 16 = 0.673
+ | x == 32 = 0.697
+ | x == 64 = 0.709
+ | otherwise = 0.7213 / (1 + 1.079 / fromIntegral x) -- Intended for m >= 128
+
+zeroCount :: DVU.Vector Word16 -> Int
+zeroCount xs = DVU.length $ DVU.filter (== 0) xs -- Let V be the number of registers equal to 0.
+
+linearCounting :: Floating a => Int -> Int -> a
+linearCounting n v = ni * log (ni / vi)
+    where ni = fromIntegral n
+          vi = fromIntegral v
 
 -- Phase 2: Result computation
 -- E: the “raw” HyperLogLog estimate}
-resultComp a m M
-  | E <= 5/2 * m = if V == 0 then E else linearCounting m V -- {small range correction}
-  | E <= 1/30 * 2 ^ 32 = E -- {intermediate range -- no correction}
-  | otherwise = -2 ^ 32 * log (1 - (E / 2 ^ 32)) -- {large range correction}
+-- Note: No side effects but does need to read vector.
+resultComp :: DVU.Vector Word16 -> Int -> Float
+resultComp mv n
+  | e <= 5 / 2 * fromIntegral n = if v == 0 then e else linearCounting n v -- {small range correction}
+  | e <= (1 / 30) * 2 ^ 32 = e -- {intermediate range -- no correction}
+  | otherwise = -2 ^ 32 * log (1 - (e / 2 ^ 32)) -- {large range correction}
   where
-    calcAlpha m
-     | m == 16 = 0.673
-     | m == 32 = 0.697
-     | m == 64 = 0.709
-     | otherwise = 0.7213 / (1 + 1.079 / m) -- Intended for m >= 128
-    -- Let V be the number of registers equal to 0.
-    V = length $ filter (== 0) M
-    c M j = (sum M * 2 ^ -(last M)) ^ (-1)
-    E = calcAlpha m * m ^ 2 * c M j
-    linearCounting = m * log (m / V)
+    v = zeroCount mv
+    sigma = DVU.sum $ DVU.map (\j -> 2 ^^ (-(fromIntegral j))) mv
+    e = calcAlpha n * fromIntegral n ^ 2 * sigma ^^ (-1)
+
+-- vector computation in IO
+goIO :: [String] -> Int -> IO (DVU.Vector Word16)
+goIO = aggregate
+
+-- vector computation in ST
+goST :: [String] -> Int -> CMS.ST s (DVU.Vector Word16)
+goST = aggregate
 
 main :: IO ()
 main = do
@@ -68,16 +98,14 @@ main = do
 
     -- Phase 0: Initialization
     -- b is referred to as p in the Google paper
-    let b = 4 -- TODO: Need to figure out what to set this to.
+    let b = 16 -- TODO: Need to figure out what to set this to.
     let m = 2 ^ b -- b from the set [4..16]
 
-    let h = map mkHash text
-    let V = undefined
-    let M = aggregate h $ initM m
+    let mv = CMS.runST $ goST text m
+    let r = resultComp mv m
 
     putStr "Total number of words: "
-    --print $ length hashed
+    print $ length text
     --let dHashed = DL.nub hashed
     putStr "Distinct number of words: "
-    --print $ length dHashed
-
+    print r
