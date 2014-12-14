@@ -14,8 +14,9 @@ import           Control.Applicative
 import qualified Control.Monad               as CM (forM_)
 import qualified Control.Monad.Primitive     as CMP (PrimMonad)
 import qualified Control.Monad.ST            as CMS (runST)
-import           Data.Bits                   as DB
+import qualified Data.Bits.Bitwise           as DBB (splitAt)
 import qualified Data.Bits.Extras            as BE (nlz, w32)
+import qualified Data.ByteString.Lazy        as BS
 import qualified Data.ByteString.Lazy.Char8  as BC (pack)
 import qualified Data.Digest.XXHash          as XXH (xxHash)
 import qualified Data.Vector.Unboxed         as DVU (Vector, filter, freeze,
@@ -23,15 +24,12 @@ import qualified Data.Vector.Unboxed         as DVU (Vector, filter, freeze,
 import qualified Data.Vector.Unboxed.Mutable as DVUM (read, replicate, write)
 
 -- Phase 1: Aggregation
-aggregate :: CMP.PrimMonad m => [String] -> Int -> m (DVU.Vector Int)
+aggregate :: CMP.PrimMonad m => [BS.ByteString] -> Int -> m (DVU.Vector Int)
 aggregate vs b = do
-  let n = 2 ^ b
-  let mask = n - 1
-  reg <- DVUM.replicate n 0
+  reg <- DVUM.replicate (2 ^ b) 0
   CM.forM_ vs $ \v -> do
-     let h = fromIntegral $ XXH.xxHash $ BC.pack v
-     let j = succ $ h .&. mask
-     let w = shiftR h b .&. mask
+     let h = fromIntegral $ XXH.xxHash v
+     let (j, w) = DBB.splitAt b h
      let rho = BE.nlz $ BE.w32 w
      jv <- DVUM.read reg j
      DVUM.write reg j $ max jv rho
@@ -53,29 +51,28 @@ calcE rs n
   where
     ni = fromIntegral n
     v = DVU.length $ DVU.filter (== 0) rs -- Let V be the number of registers equal to 0.
-    sigma = DVU.sum $ DVU.map (\r -> 2 ^^ (-(fromIntegral r))) rs
-    rawE = alpha n * ni ^ 2 * (1 / sigma)
+    z =  1 / DVU.sum (DVU.map (\r -> 2 ^^ (-(fromIntegral r))) rs)
+    rawE = alpha n * ni ^ 2 * z
     linearCounting = ni * log (ni / fromIntegral v)
 
-count :: [String] -> Int -> Float
-count t b = do
-    -- n is referred to as m in papers
-    let n = 2 ^ b -- b from the set [4..16]
-    let e = CMS.runST $ aggregate t b
-    calcE e n
+-- b from the set [4..16]
+card :: [BS.ByteString] -> Int -> Int
+card vs b = do
+    let e = CMS.runST $ aggregate vs b
+    round $ calcE e (2 ^ b) -- aka m in the literature
 
 main :: IO ()
 main = do
     let filename = "google-10000-english.txt"
-    text <- filter (notElem '.') <$> concatMap words <$> lines <$> readFile filename
+    text <- map BC.pack <$> filter (notElem '.') <$> concatMap words <$> lines <$> readFile filename
 
     -- Phase 0: Initialization
     -- b from the set [4..16]
     let b = 16 -- TODO: Make this configurable
 
-    let e = count text b
+    let e = card text b
 
     putStr "Total number of words: "
     print $ length text
     putStr "Distinct number of words: "
-    print e
+    print e -- return cardinality estimate E with typical relative error ±1.04/ m.
