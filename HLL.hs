@@ -15,7 +15,8 @@ import qualified Control.Monad               as CM (forM_)
 import qualified Control.Monad.Primitive     as CMP (PrimMonad)
 import qualified Control.Monad.ST            as CMS (runST)
 import qualified Data.Bits.Bitwise           as DBB (splitAt)
-import qualified Data.Bits.Extras            as BE (nlz, w32)
+-- from bits-extras
+import qualified Data.Bits.Extras            as BE (leadingZeros)
 import qualified Data.ByteString.Lazy        as BS
 import qualified Data.ByteString.Lazy.Char8  as BC (pack)
 import qualified Data.Digest.XXHash          as XXH (xxHash)
@@ -29,8 +30,8 @@ aggregate vs b = do
   reg <- DVUM.replicate (2 ^ b) 0
   CM.forM_ vs $ \v -> do
      let h = fromIntegral $ XXH.xxHash v
-     let (j, w) = DBB.splitAt b h
-     let rho = BE.nlz $ BE.w32 w
+     let (j, w) = DBB.splitAt b h -- lsb, msb
+     let rho = fromIntegral $ BE.leadingZeros w
      jv <- DVUM.read reg j
      DVUM.write reg j $ max jv rho
   DVU.freeze reg

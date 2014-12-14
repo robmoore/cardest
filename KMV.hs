@@ -26,9 +26,9 @@ condInsert x k mq
    | otherwise = mq -- value isn't larger than max so no-op
 
 estCount :: RealFrac a => Int -> DPM.MaxQueue a -> Int
-estCount k mq = if sz < k then sz else round $ d k mq
+estCount k mq = if sz < k then sz else round d
     where sz = DPM.size mq
-          d n pq= fromIntegral (n - 1) / DPM.findMax pq
+          d = fromIntegral (k - 1) / DPM.findMax mq
 
 main :: IO ()
 main = do
