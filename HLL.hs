@@ -14,9 +14,9 @@ import           Control.Applicative
 import qualified Control.Monad               as CM (forM_)
 import qualified Control.Monad.Primitive     as CMP (PrimMonad)
 import qualified Control.Monad.ST            as CMS (runST)
-import qualified Data.Bits.Bitwise           as DBB (splitAt)
+import           Data.Bits
 -- from bits-extras
-import qualified Data.Bits.Extras            as BE (trailingZeros)
+import qualified Data.Bits.Extras            as BE (leadingZeros)
 import qualified Data.ByteString.Lazy        as BS
 import qualified Data.ByteString.Lazy.Char8  as BC (pack)
 import qualified Data.Char                   as DC (intToDigit)
@@ -35,23 +35,24 @@ toBase base num = N.showIntAtBase base DC.intToDigit num ""
 aggregate :: CMP.PrimMonad m => [BS.ByteString] -> Int -> m (DVU.Vector DW.Word32)
 aggregate vs b = do
   let n = 2 ^ b
-  let bi = fromIntegral b
+  let mask = fromIntegral n - 1
   reg <- DVUM.replicate n 0
   CM.forM_ vs $ \v -> do
      let h = XXH.xxHash v
-     let (j, w) = DBB.splitAt (b - 1) $ fromIntegral h
-     let lz = BE.trailingZeros w
-     let rho = succ $ if lz == 0 || lz >= bi then 0 else lz -- TODO: always at least 1??? Read paper again.
+     let j = fromIntegral (h .&. mask) -- isolate first b bits for use as index
+     let w = h .|. mask -- turn on first b bits so they don't impact leadingZeros count
+     let rho = 1 + BE.leadingZeros w
      jv <- DVUM.read reg j
      DVUM.write reg j $ max jv rho
   DVU.freeze reg
 
 alpha :: Int -> Float
 alpha n
- | n == 16 = 0.673
- | n == 32 = 0.697
- | n == 64 = 0.709
- | otherwise = 0.7213 / (1 + 1.079 / fromIntegral n) -- Intended for m >= 128
+ | d == 1 = 0.673 -- n >= 16
+ | d == 2 = 0.697 -- n >= 32
+ | d == 3 = 0.709 -- n >= 64
+ | otherwise = 0.7213 / (1 + 1.079 / fromIntegral n) -- n >= 128 (in paper)
+ where d = div n 16
 
 -- Phase 2: Result computation
 calcE :: DVU.Vector DW.Word32 -> Int -> Float
