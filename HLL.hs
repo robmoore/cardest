@@ -12,76 +12,74 @@ module HLL where
 
 import           Control.Applicative
 import qualified Control.Monad               as CM (forM_)
-import qualified Control.Monad.Primitive     as CMP (PrimMonad)
 import qualified Control.Monad.ST            as CMS (runST)
-import           Data.Bits
+import qualified Data.Bits                   as DB ((.&.), (.|.))
 -- from bits-extras
 import qualified Data.Bits.Extras            as BE (leadingZeros)
 import qualified Data.ByteString.Lazy        as BS
 import qualified Data.ByteString.Lazy.Char8  as BC (pack)
-import qualified Data.Char                   as DC (intToDigit)
 import qualified Data.Digest.XXHash          as XXH (xxHash)
 import qualified Data.Vector.Unboxed         as DVU (Vector, filter, freeze,
                                                      length, map, sum)
 import qualified Data.Vector.Unboxed.Mutable as DVUM (read, replicate, write)
 import qualified Data.Word                   as DW (Word32)
-import qualified Numeric                     as N (showIntAtBase)
 
--- Returns binary representation of number
-toBase :: (Integral a, Show a) => a -> a -> String
-toBase base num = N.showIntAtBase base DC.intToDigit num ""
+calcN :: Int -> Int
+calcN b = 2 ^ b
 
 -- Phase 1: Aggregation
-aggregate :: CMP.PrimMonad m => [BS.ByteString] -> Int -> m (DVU.Vector DW.Word32)
-aggregate vs b = do
-  let n = 2 ^ b
+aggregate :: [BS.ByteString] -> Int -> DVU.Vector DW.Word32
+aggregate vs b = CMS.runST $ do
+  let n = calcN b
   let mask = fromIntegral n - 1
   reg <- DVUM.replicate n 0
   CM.forM_ vs $ \v -> do
-     let h = XXH.xxHash v
-     let j = fromIntegral (h .&. mask) -- isolate first b bits for use as index
-     let w = h .|. mask -- turn on first b bits so they don't impact leadingZeros count
-     let rho = 1 + BE.leadingZeros w
+     let (j, rho) = mkPair v mask
      jv <- DVUM.read reg j
      DVUM.write reg j $ max jv rho
   DVU.freeze reg
 
-alpha :: Int -> Float
-alpha n
- | d == 1 = 0.673 -- n >= 16
- | d == 2 = 0.697 -- n >= 32
- | d == 3 = 0.709 -- n >= 64
- | otherwise = 0.7213 / (1 + 1.079 / fromIntegral n) -- n >= 128 (in paper)
- where d = div n 16
+mkPair :: BS.ByteString -> Int -> (Int, DW.Word32)
+mkPair v m = (j, rho)
+    where h = fromIntegral $ XXH.xxHash v
+          j = fromIntegral $ h DB..&. m -- isolate first b bits for use as index
+          w = h DB..|. m -- turn on first b bits so they don't impact leadingZeros count
+          rho = 1 + BE.leadingZeros w
 
 -- Phase 2: Result computation
 calcE :: DVU.Vector DW.Word32 -> Int -> Float
-calcE rs n
-  | rawE <= 5 / 2 * ni = if v == 0 then rawE else linearCounting -- {small range correction}
-  | rawE <= (1 / 30) * 2 ^ 32 = rawE -- {intermediate range -- no correction}
-  | otherwise = -2 ^ 32 * log (1 - rawE / 2 ^ 32) -- {large range correction}
-  where
-    ni = fromIntegral n
-    v = DVU.length $ DVU.filter (== 0) rs -- Let V be the number of registers equal to 0.
-    z =  1 / DVU.sum (DVU.map (\r -> 2 ^^ (-(fromIntegral r))) rs)
-    rawE = alpha n * ni ^ 2 * z
-    linearCounting = ni * log (ni / fromIntegral v)
+calcE rs n | rawE <= 5 / 2 * ni = if v == 0 then rawE else linearCounting -- {small range correction}
+           | rawE <= (1 / 30) * 2 ^ 32 = rawE -- {intermediate range -- no correction}
+           | otherwise = -2 ^ 32 * log (1 - rawE / 2 ^ 32) -- {large range correction}
+           where ni = fromIntegral n
+                 v = DVU.length $ DVU.filter (== 0) rs -- Let V be the number of registers equal to 0.
+                 z =  1 / DVU.sum (DVU.map (\r -> 2 ^^ (-(fromIntegral r))) rs)
+                 rawE = alpha n * ni ^ 2 * z
+                 linearCounting = ni * log (ni / fromIntegral v)
+
+-- quickCheck (\n -> alpha n >= 0 && alpha n <= 1)
+alpha :: Int -> Float
+alpha n | d == 1 = 0.673 -- n >= 16
+        | d == 2 = 0.697 -- n >= 32
+        | d >= 3 && d <= 8 = 0.709 -- n >= 64
+        | d >= 8 = 0.7213 / (1 + 1.079 / fromIntegral n) -- n >= 128 (in paper)
+        | otherwise = 1
+        where d = div n 16
 
 -- b from the set [4..16]
 card :: [BS.ByteString] -> Int -> Int
-card vs b = do
-    let e = CMS.runST $ aggregate vs b
-    round $ calcE e (2 ^ b) -- aka m in the literature
+card vs b = round $ calcE e $ calcN b -- aka m in the literature
+    where e = aggregate vs b
+
+card' :: [String] -> Int -> Int
+card' vs = card (map BC.pack vs)
 
 main :: IO ()
 main = do
     let filename = "google-10000-english.txt"
     text <- map BC.pack <$> filter (notElem '.') <$> concatMap words <$> lines <$> readFile filename
 
-    -- Phase 0: Initialization
-    -- b from the set [4..16]
     let b = 16 -- TODO: Make this configurable
-
     let e = card text b
 
     putStr "Total number of words: "
