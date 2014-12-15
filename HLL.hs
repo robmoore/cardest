@@ -16,22 +16,32 @@ import qualified Control.Monad.Primitive     as CMP (PrimMonad)
 import qualified Control.Monad.ST            as CMS (runST)
 import qualified Data.Bits.Bitwise           as DBB (splitAt)
 -- from bits-extras
-import qualified Data.Bits.Extras            as BE (leadingZeros)
+import qualified Data.Bits.Extras            as BE (trailingZeros)
 import qualified Data.ByteString.Lazy        as BS
 import qualified Data.ByteString.Lazy.Char8  as BC (pack)
+import qualified Data.Char                   as DC (intToDigit)
 import qualified Data.Digest.XXHash          as XXH (xxHash)
 import qualified Data.Vector.Unboxed         as DVU (Vector, filter, freeze,
                                                      length, map, sum)
 import qualified Data.Vector.Unboxed.Mutable as DVUM (read, replicate, write)
+import qualified Data.Word                   as DW (Word32)
+import qualified Numeric                     as N (showIntAtBase)
+
+-- Returns binary representation of number
+toBase :: (Integral a, Show a) => a -> a -> String
+toBase base num = N.showIntAtBase base DC.intToDigit num ""
 
 -- Phase 1: Aggregation
-aggregate :: CMP.PrimMonad m => [BS.ByteString] -> Int -> m (DVU.Vector Int)
+aggregate :: CMP.PrimMonad m => [BS.ByteString] -> Int -> m (DVU.Vector DW.Word32)
 aggregate vs b = do
-  reg <- DVUM.replicate (2 ^ b) 0
+  let n = 2 ^ b
+  let bi = fromIntegral b
+  reg <- DVUM.replicate n 0
   CM.forM_ vs $ \v -> do
-     let h = fromIntegral $ XXH.xxHash v
-     let (j, w) = DBB.splitAt b h -- lsb, msb
-     let rho = fromIntegral $ BE.leadingZeros w
+     let h = XXH.xxHash v
+     let (j, w) = DBB.splitAt (b - 1) $ fromIntegral h
+     let lz = BE.trailingZeros w
+     let rho = succ $ if lz == 0 || lz >= bi then 0 else lz -- TODO: always at least 1??? Read paper again.
      jv <- DVUM.read reg j
      DVUM.write reg j $ max jv rho
   DVU.freeze reg
@@ -44,7 +54,7 @@ alpha n
  | otherwise = 0.7213 / (1 + 1.079 / fromIntegral n) -- Intended for m >= 128
 
 -- Phase 2: Result computation
-calcE :: DVU.Vector Int -> Int -> Float
+calcE :: DVU.Vector DW.Word32 -> Int -> Float
 calcE rs n
   | rawE <= 5 / 2 * ni = if v == 0 then rawE else linearCounting -- {small range correction}
   | rawE <= (1 / 30) * 2 ^ 32 = rawE -- {intermediate range -- no correction}
