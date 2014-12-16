@@ -19,7 +19,7 @@ import qualified Data.ByteString.Lazy        as BS
 import qualified Data.ByteString.Lazy.Char8  as BC (pack)
 import qualified Data.Digest.XXHash          as XXH (xxHash)
 import qualified Data.Vector.Unboxed         as DVU (Vector, filter, freeze,
-                                                     length, map, sum)
+                                                     length, map, sum, zipWith)
 import qualified Data.Vector.Unboxed.Mutable as DVUM (read, replicate, write)
 import qualified Data.Word                   as DW (Word32)
 
@@ -59,7 +59,6 @@ calcE rs m | rawE <= 5 / 2 * mi = if v == 0 then rawE else linearCounting -- {sm
                  rawE = alpha m * mi ^ 2 * z
                  linearCounting = mi * log (mi / fromIntegral v)
 
--- quickCheck (\n -> alpha n >= 0 && alpha n <= 1)
 alpha :: Int -> Float
 alpha m | d == 1 = 0.673 -- m >= 16
         | d == 2 = 0.697 -- m >= 32
@@ -76,6 +75,14 @@ card vs b = round $ calcE e m
 
 card' :: [String] -> Int -> Int
 card' vs = card (map BC.pack vs)
+
+-- Contrived in that you could just feed it all as one list
+union :: [BS.ByteString]
+           -> [BS.ByteString] -> Int -> Int
+union bs1 bs2 b = round $ calcE vsc b
+    where vs1 = aggregate bs1 b
+          vs2 = aggregate bs2 b
+          vsc = DVU.zipWith max vs1 vs2
 
 main :: IO ()
 main = do

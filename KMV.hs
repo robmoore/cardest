@@ -7,7 +7,7 @@ module KMV where
 import qualified Data.Digest.XXHash   as XXH (xxHash)
 import qualified Data.PQueue.Max      as DPM (MaxQueue, deleteMax, empty,
                                               findMax, insert, null, singleton,
-                                              size)
+                                              size, toAscList)
 import           Data.Word            (Word32)
 import           System.Random
 
@@ -20,21 +20,37 @@ mkValue :: Fractional a => BS.ByteString -> a
 mkValue bs = fromIntegral h / fromIntegral (maxBound :: Word32) -- resize to {0,1}
    where h = XXH.xxHash bs
 
-condInsert :: Ord a => a -> Int -> DPM.MaxQueue a -> DPM.MaxQueue a
+mkPq :: (Fractional a, Ord a) =>
+          [a] -> Int -> DPM.MaxQueue a
+mkPq vs k = foldr (`condInsert` k) DPM.empty vs
+
+mkPq' bs = mkPq vs
+    where vs = map mkValue bs
+
+condInsert :: (Fractional a, Ord a) => a -> Int -> DPM.MaxQueue a -> DPM.MaxQueue a
 condInsert v k mq
    | DPM.null mq = DPM.singleton v
    | DPM.size mq < k = DPM.insert v mq -- haven't reached K so insert
    | v < DPM.findMax mq = DPM.deleteMax $ DPM.insert v mq
    | otherwise = mq -- value isn't larger than max so no-op
 
-calcE :: (Fractional a, Integral b) => DPM.MaxQueue a -> b -> a
+calcE :: (Fractional a, RealFrac a) => DPM.MaxQueue a -> Int -> a
 calcE mq k = fromIntegral (k - 1) / DPM.findMax mq
 
+calc :: (Fractional a, RealFrac a) => DPM.MaxQueue a -> Int -> Int
+calc mq k = if sz < k then sz else round $ calcE mq k
+    where sz = DPM.size mq
+
 card :: [BS.ByteString] -> Int -> Int
-card bs k = if sz < k then sz else round $ calcE mq k
-    where vs = map mkValue bs
-          mq = foldr (`condInsert` k) DPM.empty vs
-          sz = DPM.size mq
+card bs k = calc (mkPq' bs k) k
+
+union :: [BS.ByteString] -> [BS.ByteString] -> Int -> Int
+union bs1 bs2 k = calc upq k
+    where pq1 = mkPq' bs1 k
+          pq2 = mkPq' bs2 k
+          uk = min (DPM.size pq1) (DPM.size pq2)
+          ul = take uk (DPM.toAscList pq1) ++ take uk (DPM.toAscList pq2)
+          upq = mkPq ul uk
 
 main :: IO ()
 main = do
