@@ -46,7 +46,7 @@ mkPair v b = (j, rho)
           h = XXH.xxHash v
           j = fromIntegral $ h .&. mask -- isolate first b bits for use as index
           w = h `shiftR` b -- remove first b bits
-          rho = 1 + BE.trailingZeros w -- count leading zeros from lsb (yes, this is confusing)
+          rho = 1 + BE.trailingZeros w -- count leading zeros from lsb up (yes, this is confusing: leading or trailing?)
 
 -- Phase 2: Result computation
 calcE :: DVU.Vector DW.Word32 -> Int -> Float
@@ -73,10 +73,12 @@ card vs b = round $ calcE e m
     where e = aggregate vs b
           m = calcM b
 
+-- Convenience function when using strings.
 card' :: [String] -> Int -> Int
 card' vs = card (map BC.pack vs)
 
--- Contrived in that you could just feed it all as one list. Just using to test union approach for now.
+-- Creates union of two HLL sets using the minumum values for each bucket
+-- across both sets.
 union :: [BS.ByteString]
            -> [BS.ByteString] -> Int -> Int
 union bs1 bs2 b = round $ calcE vsc m

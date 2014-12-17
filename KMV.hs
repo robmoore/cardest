@@ -24,6 +24,9 @@ mkPq :: (Fractional a, Ord a) =>
           [a] -> Int -> DPM.MaxQueue a
 mkPq vs k = foldr (`condInsert` k) DPM.empty vs
 
+-- Creates priority queue using bytestring rather than already hashe values
+mkPq' :: (Fractional a, Ord a) =>
+           [BS.ByteString] -> Int -> DPM.MaxQueue a
 mkPq' bs = mkPq vs
     where vs = map mkValue bs
 
@@ -44,6 +47,10 @@ calc mq k = if sz < k then sz else round $ calcE mq k
 card :: [BS.ByteString] -> Int -> Int
 card bs k = calc (mkPq' bs k) k
 
+-- Creates union of two KMV sets using the approach of taking minimum k values
+-- and merging them together by preserving lowest values across both. If KMV
+-- set has differing k value (length) then the resulting k value is the lesser
+-- of the two.
 union :: [BS.ByteString] -> [BS.ByteString] -> Int -> Int
 union bs1 bs2 k = calc upq k
     where pq1 = mkPq' bs1 k
