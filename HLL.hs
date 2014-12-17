@@ -42,10 +42,10 @@ aggregate vs b = CMS.runST $ do
 
 mkPair :: BS.ByteString -> Int -> (Int, DW.Word32)
 mkPair v b = (j, rho)
-    where mask = pred $ calcM b
-          h = fromIntegral $ XXH.xxHash v
+    where mask = pred $ 1 `shiftL` b
+          h = XXH.xxHash v
           j = fromIntegral $ h .&. mask -- isolate first b bits for use as index
-          w = h `shiftR` b  -- remove first b bits
+          w = h `shiftR` b -- remove first b bits
           rho = 1 + BE.trailingZeros w -- count leading zeros from lsb (yes, this is confusing)
 
 -- Phase 2: Result computation
@@ -76,11 +76,12 @@ card vs b = round $ calcE e m
 card' :: [String] -> Int -> Int
 card' vs = card (map BC.pack vs)
 
--- Contrived in that you could just feed it all as one list
+-- Contrived in that you could just feed it all as one list. Just using to test union approach for now.
 union :: [BS.ByteString]
            -> [BS.ByteString] -> Int -> Int
-union bs1 bs2 b = round $ calcE vsc b
-    where vs1 = aggregate bs1 b
+union bs1 bs2 b = round $ calcE vsc m
+    where m = calcM b
+          vs1 = aggregate bs1 b
           vs2 = aggregate bs2 b
           vsc = DVU.zipWith max vs1 vs2
 
@@ -90,12 +91,19 @@ main = do
 
     g <- getStdGen
     let n = floor 1e6 -- Max value tested. 1e7 kills GHCI.
-    let c = div n 10
+    let c = div n 5
     let r = take n (randoms g :: [DW.Word32])
     let bss = DLS.chunksOf c $ map DB.encode r
     let cards = map (`card` b) bss
     print cards
 
-    let results = map (\x -> fromIntegral c / fromIntegral x) cards
+    let results = map (\x -> fromIntegral c / fromIntegral x)
 
-    print results
+    print $ results cards
+
+    let unionCards = zipWith (\x y -> union x y b) bss $ tail bss
+    print unionCards
+
+    print $ map (* 2) $ results unionCards
+
+

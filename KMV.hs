@@ -58,12 +58,17 @@ main = do
 
     g <- getStdGen
     let n = floor 1e6 -- Max value tested. 1e7 kills GHCI.
-    let c = div n 10
+    let c = div n 5
     let r = take n (randoms g :: [DW.Word32])
     let bss = DLS.chunksOf c $ map DB.encode r
     let cards = map (`card` k) bss
     print cards
 
-    let results = map (\x -> fromIntegral c / fromIntegral x) cards
+    let results = map (\x -> fromIntegral c / fromIntegral x)
 
-    print results
+    print $ results cards
+
+    let unionCards = zipWith (\x y -> union x y k) bss $ tail bss
+    print unionCards
+
+    print $ map (* 2) $ results unionCards
