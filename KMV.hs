@@ -61,7 +61,7 @@ union bs1 bs2 k = calc upq k
 
 main :: IO ()
 main = do
-    let k = 100
+    let k = 1000
 
     g <- getStdGen
     let n = floor 1e6 -- Max value tested. 1e7 kills GHCI.
