@@ -10,8 +10,7 @@ The posts from Neustar referenced [KMV](http://research.neustar.biz/2012/07/09/s
 (k minimum values) a number of times in discussing HLL and mentioned it was a simpler algorithm so I decided to start
 by implementing it first. The two represent points along the history of cardinality estimation as an area of research
 and make an interesting contrast in terms of approach (order statistics observables -- KMV -- vs. bit pattern
-observables -- HLL) and accuracy (HLL rocks the house with an accuracy of
-![equation](http://www.sciweavers.org/tex2img.php?eq=%5Cpm%201.04%20%2F%20%5Csqrt%7Bm%7D&bc=White&fc=Black&im=png&fs=12&ff=mathdesign&edit=0)).
+observables -- HLL).
 
 Although a number of implementations of HLL exist (including one in [Haskell](https://hackage.haskell.org/package/hyperloglog)),
 I wanted to implement my own to gain a deeper understanding of how these algorithms work. In both cases it has made the
